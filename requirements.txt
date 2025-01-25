@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+google-generativeai
+pymongo[srv]
+pydantic
+python-multipart
+typing-extensions
+python-jose[cryptography]
+passlib[bcrypt]
