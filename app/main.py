@@ -12,15 +12,15 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include API routes
-app.include_router(api_router, prefix="/api/v1")
-
 @app.get("/")
 async def root():
     return {"message": "Welcome to Smartfin AI API. Visit /docs for API documentation."} 
+
+# Include API routes
+app.include_router(api_router, prefix="/api/v1")
