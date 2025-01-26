@@ -29,6 +29,10 @@ app/
 │   ├── ai_service.py        # Gemini AI integration
 │   └── user_service.py      # User data operations
 └── main.py                  # FastAPI application
+│
+└── run.py                  # Run FastAPI application
+│
+└── requirements.txt        # Requirements 
 
 ```
 
