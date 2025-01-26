@@ -51,6 +51,7 @@ async def health_check():
     """
     Check the health status of the service and its dependencies.
     Returns the status of MongoDB connection and Gemini AI availability.
+    Supports both GET and HEAD requests.
     """
     health_status = {
         "status": "healthy",
