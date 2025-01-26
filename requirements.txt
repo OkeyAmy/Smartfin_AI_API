@@ -8,4 +8,8 @@ python-multipart
 typing-extensions
 python-jose[cryptography]
 passlib[bcrypt]
+<<<<<<< HEAD
 pydantic-settings
+=======
+pydantic-settings
+>>>>>>> 56f877f3fd5379c51a318b4254beef785b01f008
