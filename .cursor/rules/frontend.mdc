@@ -1,0 +1,821 @@
+---
+description: This is the breakdown fo the frontend code and how it connectse the api which has been deployed. the application will provided financncial assisatnt to the user
+globs: 
+alwaysApply: false
+---
+SmartFin-AI Chatbot: Detailed Implementation Plan
+Table of Contents
+Architecture Overview
+Frontend Implementation
+Backend API Endpoints
+MongoDB Integration
+SmartFin-AI API Integration
+Conversation History Implementation
+Authentication Integration
+
+Architecture Overview
+The SmartFin-AI chatbot is built with a Next.js application that connects to a MongoDB database and an external SmartFin-AI API. The system consists of several key components:
+┌─────────────────┐     ┌───────────────┐     ┌─────────────────────┐
+│                 │     │               │     │                     │
+│  React Chatbot  │────▶│  Next.js API  │────▶│  MongoDB Database   │
+│   Component     │     │  Endpoints    │     │                     │
+│                 │     │               │     └─────────────────────┘
+└─────────────────┘     └───────┬───────┘     
+                               │             
+                               ▼             
+                        ┌─────────────────┐   
+                        │                 │   
+                        │  SmartFin-AI    │   
+                        │     API         │   
+                        │                 │   
+                        └─────────────────┘   
+
+Data flow:
+User sends a message through the React chatbot component
+Message is sent to Next.js API endpoint
+API endpoint stores the message in MongoDB
+API endpoint fetches user context data from MongoDB
+API endpoint sends message and context to SmartFin-AI API
+SmartFin-AI API returns a response
+Response is stored in MongoDB and sent back to the frontend
+Frontend displays the response to the user
+Frontend Implementation
+The frontend chatbot is implemented as a React component using Next.js.
+Chatbot Component (src/app/components/Chatbot.jsx):
+"use client";
+import { useState, useEffect } from "react";
+import { AiOutlineSend } from "react-icons/ai";
+import { useSession } from "next-auth/react";
+import { FaTrash } from "react-icons/fa";
+
+export default function Chatbot() {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [typingMessage, setTypingMessage] = useState("");
+  const [conversationId, setConversationId] = useState(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  
+  // Destructure both data and status from useSession
+  const { data: session, status } = useSession();
+  const isAuthenticated = status === "authenticated";
+  const isLoading_session = status === "loading";
+  
+  // Load conversation history when the user is authenticated
+  useEffect(() => {
+    if (isAuthenticated && session?.user?.id) {
+      loadConversationHistory();
+    }
+  }, [isAuthenticated, session?.user?.id]);
+  
+  // Function to load conversation history
+  const loadConversationHistory = async () => {
+    if (!session?.user?.id) return;
+    
+    setIsLoadingHistory(true);
+    try {
+      const response = await fetch(`/api/chatbot?user_id=${session.user.id}`);
+      const data = await response.json();
+      
+      if (data.messages && Array.isArray(data.messages)) {
+        setMessages(data.messages);
+        if (data.conversation_id) {
+          setConversationId(data.conversation_id);
+        }
+      }
+    } catch (error) {
+      console.error("Error loading conversation history:", error);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+  
+  // Function to clear conversation history
+  const clearConversationHistory = async () => {
+    if (!session?.user?.id || !window.confirm("Are you sure you want to clear your conversation history?")) return;
+    
+    try {
+      const response = await fetch(`/api/conversation/clear?user_id=${session.user.id}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        setMessages([]);
+        setConversationId(null);
+      }
+    } catch (error) {
+      console.error("Error clearing conversation history:", error);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (input.trim() === "") return;
+    
+    // Get user_id from session
+    const user_id = session?.user?.id;
+    
+    // If no user_id, show an error or prompt to login
+    if (!user_id) {
+      setMessages(prev => [
+        ...prev, 
+        { role: "user", content: input },
+        { role: "assistant", content: "Please log in to use the financial assistant." }
+      ]);
+      setInput("");
+      return;
+    }
+
+    const newMessage = { role: "user", content: input, timestamp: new Date() };
+    setMessages((prev) => [...prev, newMessage]);
+    setInput("");
+    setIsLoading(true);
+
+    try {
+      const response = await fetch("/api/chatbot", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          message: input,
+          user_id: user_id
+        }),
+      });
+      const data = await response.json();
+
+      if (data.reply) {
+        // Initialize the typewriter effect for AI's response
+        typewriterEffect(data.reply);
+      } else if (data.error) {
+        typewriterEffect(`Error: ${data.error}`);
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      typewriterEffect("Sorry, there was an error connecting to the financial assistant.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Typewriter effect for AI's response
+  const typewriterEffect = (text) => {
+    let index = 0;
+    setTypingMessage("");
+    const interval = setInterval(() => {
+      setTypingMessage((prev) => prev + text.charAt(index));
+      index++;
+      if (index === text.length) {
+        clearInterval(interval);
+        setMessages((prev) => [...prev, { role: "assistant", content: text, timestamp: new Date() }]);
+        setTypingMessage(""); // Clear the typing message once completed
+      }
+    }, 30); // Adjust speed for typewriter effect
+  };
+  
+  // Format timestamp for display
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  // JSX rendering
+  return (
+    <div className="flex flex-col items-center p-2 space-y-2 bg-white shadow-lg rounded-lg max-w-md w-full mx-auto my-2 sm:my-2">
+      {/* Header with title and clear button */}
+      <div className="flex justify-between items-center w-full">
+        <h2 className="text-2xl font-bold text-indigo-600">Financial Assistant</h2>
+        
+        {isAuthenticated && messages.length > 0 && (
+          <button
+            onClick={clearConversationHistory}
+            className="text-gray-500 hover:text-red-500"
+            title="Clear conversation history"
+          >
+            <FaTrash />
+          </button>
+        )}
+      </div>
+      
+      {/* Loading and authentication states */}
+      {isLoading_session && (
+        <div className="w-full p-2 bg-gray-100 text-gray-600 rounded text-sm text-center">
+          Loading session...
+        </div>
+      )}
+      
+      {!isLoading_session && !isAuthenticated && (
+        <div className="w-full p-2 bg-yellow-100 text-yellow-800 rounded text-sm">
+          Please log in to get personalized financial advice.
+        </div>
+      )}
+      
+      {isLoadingHistory && (
+        <div className="w-full p-2 bg-blue-50 text-blue-600 rounded text-sm text-center">
+          Loading your conversation history...
+        </div>
+      )}
+
+      {/* Messages container */}
+      <div className="flex flex-col space-y-2 w-full bg-gray-100 p-4 rounded-lg overflow-y-auto h-80 sm:h-96">
+        {/* Empty state message */}
+        {messages.length === 0 && (
+          <div className="text-gray-500 text-center italic">
+            Ask me anything about your finances!
+          </div>
+        )}
+        
+        {/* Render messages */}
+        {messages.map((msg, index) => (
+          <div
+            key={index}
+            className={`flex ${
+              msg.role === "user" ? "justify-end" : "justify-start"
+            }`}
+          >
+            <div
+              className={`max-w-xs sm:max-w-sm lg:max-w-md break-words p-3 rounded-lg ${
+                msg.role === "user"
+                  ? "bg-indigo-500 text-white"
+                  : "bg-gray-300 text-gray-800"
+              }`}
+            >
+              {msg.content}
+              {msg.timestamp && (
+                <div className={`text-xs mt-1 text-right ${msg.role === "user" ? "text-indigo-200" : "text-gray-500"}`}>
+                  {formatTimestamp(msg.timestamp)}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        
+        {/* Typing indicator */}
+        {typingMessage && (
+          <div className="flex justify-start">
+            <div className="bg-gray-300 text-gray-800 p-3 rounded-lg inline-block">
+              {typingMessage}
+            </div>
+          </div>
+        )}
+        
+        {/* Loading indicator */}
+        {isLoading && !typingMessage && (
+          <div className="flex justify-start">
+            <div className="bg-gray-300 text-gray-800 p-3 rounded-lg inline-block animate-pulse">
+              Thinking...
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input area */}
+      <div className="flex space-x-2 w-full">
+        <input
+          type="text"
+          className="flex-grow border p-2 rounded-lg focus:outline-none focus:ring focus:border-indigo-300"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask about your finances..."
+          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+          disabled={!isAuthenticated || isLoading_session}
+        />
+        <button
+          onClick={sendMessage}
+          disabled={isLoading || !isAuthenticated || isLoading_session}
+          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-500 disabled:opacity-50"
+        >
+          {isLoading ? (
+            <div className="animate-spin">...</div>
+          ) : (
+            <AiOutlineSend className="text-2xl" />
+          )}{" "}
+        </button>
+      </div>
+    </div>
+  );
+}
+Backend API Endpoints
+Chatbot API (src/app/api/chatbot/route.js):
+import { NextResponse } from "next/server";
+import dotenv from "dotenv";
+import { getUserFullContext } from "../../../lib/userDataService";
+import { sendToSmartFin } from "../../../lib/aiClient";
+import { saveMessage, getRecentConversation } from "../../../lib/conversationService";
+
+// Configure dotenv to load environment variables
+dotenv.config();
+
+export async function POST(req) {
+  try {
+    // Extract message and user_id from request
+    const { message, user_id } = await req.json();
+    
+    // Validate required parameters
+    if (!message) {
+      return NextResponse.json(
+        { error: "Message is required" },
+        { status: 400 }
+      );
+    }
+    
+    if (!user_id) {
+      return NextResponse.json(
+        { error: "User ID is required" },
+        { status: 400 }
+      );
+    }
+    
+    // Save the user's message to conversation history
+    await saveMessage(user_id, 'user', message);
+    
+    // 1. Gather user data from MongoDB
+    const userContext = await getUserFullContext(user_id);
+    
+    // 2. Send data to SmartFin-AI and get response
+    const aiResponse = await sendToSmartFin(user_id, message, userContext);
+    
+    // 3. Save the AI's response to conversation history
+    await saveMessage(user_id, 'assistant', aiResponse);
+    
+    // 4. Return the AI response
+    return NextResponse.json({ reply: aiResponse });
+  } catch (error) {
+    console.error("Error processing chatbot request:", error);
+    return NextResponse.json(
+      { error: "Failed to generate response" },
+      { status: 500 }
+    );
+  }
+}
+
+// Add a GET method to retrieve conversation history
+export async function GET(req) {
+  try {
+    // Get user_id from the URL search parameters
+    const url = new URL(req.url);
+    const user_id = url.searchParams.get('user_id');
+    
+    // Validate required parameters
+    if (!user_id) {
+      return NextResponse.json(
+        { error: "User ID is required" },
+        { status: 400 }
+      );
+    }
+    
+    // Get the most recent conversation
+    const conversation = await getRecentConversation(user_id);
+    
+    if (!conversation) {
+      return NextResponse.json({ messages: [] });
+    }
+    
+    // Return the conversation messages
+    return NextResponse.json({ 
+      messages: conversation.messages,
+      conversation_id: conversation._id
+    });
+  } catch (error) {
+    console.error("Error retrieving conversation history:", error);
+    return NextResponse.json(
+      { error: "Failed to retrieve conversation history" },
+      { status: 500 }
+    );
+  }
+}
+Clear Conversation API (src/app/api/conversation/clear/route.js):
+import { NextResponse } from "next/server";
+import { clearConversationHistory } from "../../../../lib/conversationService";
+
+/**
+ * API endpoint to clear a user's conversation history
+ * DELETE /api/conversation/clear?user_id={user_id}
+ */
+export async function DELETE(req) {
+  try {
+    // Get user_id from the URL search parameters
+    const url = new URL(req.url);
+    const user_id = url.searchParams.get('user_id');
+    
+    // Validate required parameters
+    if (!user_id) {
+      return NextResponse.json(
+        { error: "User ID is required" },
+        { status: 400 }
+      );
+    }
+    
+    // Clear the user's conversation history
+    const deletedCount = await clearConversationHistory(user_id);
+    
+    return NextResponse.json({ 
+      success: true,
+      message: `Cleared ${deletedCount} conversations` 
+    });
+  } catch (error) {
+    console.error("Error clearing conversation history:", error);
+    return NextResponse.json(
+      { error: "Failed to clear conversation history" },
+      { status: 500 }
+    );
+  }
+}
+MongoDB Integration
+MongoDB Connection (src/lib/mongodb.js):
+// Direct MongoDB connection utility
+import { MongoClient } from 'mongodb';
+
+if (!process.env.MONGODB_URI) {
+  throw new Error('Please add your MongoDB URI to .env.local');
+}
+
+const uri = process.env.MONGODB_URI;
+const options = {
+  maxPoolSize: 10,
+  minPoolSize: 5,
+  retryWrites: true,
+  w: 'majority',
+};
+
+let client;
+let clientPromise;
+
+if (process.env.NODE_ENV === 'development') {
+  // In development mode, use a global variable so that the value
+  // is preserved across module reloads caused by HMR (Hot Module Replacement).
+  if (!global._mongoClientPromise) {
+    client = new MongoClient(uri, options);
+    global._mongoClientPromise = client.connect();
+  }
+  clientPromise = global._mongoClientPromise;
+} else {
+  // In production mode, it's best to not use a global variable.
+  client = new MongoClient(uri, options);
+  clientPromise = client.connect();
+}
+
+// Export a module-scoped MongoClient promise
+export const getMongoClient = async () => {
+  return await clientPromise;
+};
+
+// Helper function to connect to database
+export async function connectToDatabase() {
+  try {
+    const client = await getMongoClient();
+    const db = client.db(process.env.MONGODB_DB || 'smartfin');
+    return { db, client };
+  } catch (error) {
+    console.error('Failed to connect to MongoDB:', error);
+    throw new Error('Unable to connect to database');
+  }
+}
+
+// Helper function to get a collection with proper error handling
+export async function getCollection(collectionName) {
+  try {
+    const { db } = await connectToDatabase();
+    return db.collection(collectionName);
+  } catch (error) {
+    console.error(`Failed to get collection ${collectionName}:`, error);
+    throw new Error(`Unable to access collection: ${collectionName}`);
+  }
+}
+
+// Helper function to close database connection
+export async function closeDatabaseConnection() {
+  try {
+    if (client) {
+      await client.close();
+    }
+  } catch (error) {
+    console.error('Error closing database connection:', error);
+    throw new Error('Failed to close database connection');
+  }
+}
+User Data Service (src/lib/userDataService.js):
+import { getCollection } from './mongodb';
+import { ObjectId } from 'mongodb';
+
+/**
+ * Fetches all relevant user data from MongoDB for a given user ID
+ * This includes profile, transactions, expenses summary, contacts, and products/services
+ */
+export async function getUserFullContext(userId) {
+  try {
+    // Convert the userId to MongoDB ObjectId if it's a string
+    const _id = typeof userId === 'string' ? new ObjectId(userId) : userId;
+    
+    // 1) Basic profile
+    const usersCollection = await getCollection('users');
+    const profile = await usersCollection.findOne({ _id });
+    
+    // 2) Transactions
+    const transactionsCollection = await getCollection('transactions');
+    const transactions = await transactionsCollection
+      .find({ user_id: _id })
+      .toArray();
+    
+    // 3) Expenses summary
+    const expensesCollection = await getCollection('expenses_summary');
+    const expenses_summary = await expensesCollection.findOne({ user_id: _id });
+    
+    // 4) Contacts
+    const contactsCollection = await getCollection('contacts');
+    const contacts = await contactsCollection
+      .find({ user_id: _id })
+      .toArray();
+    
+    // 5) Products & services
+    const productsCollection = await getCollection('products_services');
+    const products_services = await productsCollection
+      .find({ user_id: _id })
+      .toArray();
+    
+    return { 
+      profile, 
+      transactions, 
+      expenses_summary, 
+      contacts, 
+      products_services 
+    };
+  } catch (error) {
+    console.error('Error fetching user context:', error);
+    throw new Error('Failed to fetch user data from MongoDB');
+  }
+}
+Conversation Service (src/lib/conversationService.js):
+import { getCollection } from './mongodb';
+import { ObjectId } from 'mongodb';
+
+/**
+ * Service for managing conversation history
+ * Provides functions to save, retrieve, and update conversations
+ */
+const COLLECTION_NAME = 'conversation_history';
+
+/**
+ * Saves a new message to the conversation history
+ * @param {string} userId - The user ID
+ * @param {string} role - 'user' or 'assistant'
+ * @param {string} content - The message content
+ * @param {string} source - Source of the conversation (e.g., 'web', 'mobile')
+ * @returns {Promise<Object>} - The updated conversation
+ */
+export async function saveMessage(userId, role, content, source = 'web') {
+  try {
+    const collection = await getCollection(COLLECTION_NAME);
+    const timestamp = new Date();
+    
+    // Find the most recent conversation for this user
+    let conversation = await collection.findOne(
+      { user_id: userId },
+      { sort: { updated_at: -1 } }
+    );
+    
+    // If no conversation exists or the last one is older than 24 hours, create a new one
+    if (!conversation || (timestamp - new Date(conversation.updated_at) > 24 * 60 * 60 * 1000)) {
+      // Create a new conversation
+      const newConversation = {
+        user_id: userId,
+        messages: [{
+          role,
+          content,
+          timestamp
+        }],
+        created_at: timestamp,
+        updated_at: timestamp,
+        metadata: {
+          source,
+          session_id: new ObjectId().toString(),
+          context_version: '1.0'
+        }
+      };
+      
+      const result = await collection.insertOne(newConversation);
+      return { ...newConversation, _id: result.insertedId };
+    }
+    
+    // Otherwise, add to the existing conversation
+    const updatedConversation = await collection.findOneAndUpdate(
+      { _id: conversation._id },
+      { 
+        $push: { 
+          messages: { 
+            role, 
+            content, 
+            timestamp 
+          } 
+        },
+        $set: { updated_at: timestamp }
+      },
+      { returnDocument: 'after' }
+    );
+    
+    return updatedConversation;
+  } catch (error) {
+    console.error('Error saving message:', error);
+    throw new Error('Failed to save message to conversation history');
+  }
+}
+
+/**
+ * Retrieves conversation history for a user
+ * @param {string} userId - The user ID
+ * @param {number} limit - Maximum number of conversations to return
+ * @returns {Promise<Array>} - Array of conversation objects
+ */
+export async function getConversationHistory(userId, limit = 1) {
+  try {
+    const collection = await getCollection(COLLECTION_NAME);
+    
+    // Get the most recent conversations for this user
+    const conversations = await collection
+      .find({ user_id: userId })
+      .sort({ updated_at: -1 })
+      .limit(limit)
+      .toArray();
+    
+    return conversations;
+  } catch (error) {
+    console.error('Error retrieving conversation history:', error);
+    throw new Error('Failed to retrieve conversation history');
+  }
+}
+
+/**
+ * Retrieves the most recent conversation for a user
+ * @param {string} userId - The user ID
+ * @returns {Promise<Object|null>} - The most recent conversation or null
+ */
+export async function getRecentConversation(userId) {
+  try {
+    const conversations = await getConversationHistory(userId, 1);
+    return conversations.length > 0 ? conversations[0] : null;
+  } catch (error) {
+    console.error('Error retrieving recent conversation:', error);
+    throw new Error('Failed to retrieve recent conversation');
+  }
+}
+
+/**
+ * Deletes a conversation by ID
+ * @param {string} conversationId - The conversation ID to delete
+ * @param {string} userId - The user ID (for verification)
+ * @returns {Promise<boolean>} - True if deleted successfully
+ */
+export async function deleteConversation(conversationId, userId) {
+  try {
+    const collection = await getCollection(COLLECTION_NAME);
+    
+    // Delete the conversation (ensuring it belongs to the user)
+    const result = await collection.deleteOne({
+      _id: new ObjectId(conversationId),
+      user_id: userId
+    });
+    
+    return result.deletedCount > 0;
+  } catch (error) {
+    console.error('Error deleting conversation:', error);
+    throw new Error('Failed to delete conversation');
+  }
+}
+
+/**
+ * Clears all conversation history for a user
+ * @param {string} userId - The user ID
+ * @returns {Promise<number>} - Number of conversations deleted
+ */
+export async function clearConversationHistory(userId) {
+  try {
+    const collection = await getCollection(COLLECTION_NAME);
+    
+    // Delete all conversations for this user
+    const result = await collection.deleteMany({ user_id: userId });
+    
+    return result.deletedCount;
+  } catch (error) {
+    console.error('Error clearing conversation history:', error);
+    throw new Error('Failed to clear conversation history');
+  }
+}
+SmartFin-AI API Integration
+AI Client (src/lib/aiClient.js):
+/**
+ * Client for communicating with the SmartFin-AI API
+ * Sends user data, message, and context to the AI endpoint and returns the response
+ */
+import { getRecentConversation } from './conversationService';
+
+// Base URL for the SmartFin AI API
+const SMARTFIN_BASE = process.env.SMARTFIN_BASE || 'https://smartfin-ai-api.onrender.com';
+
+/**
+ * Sends user data to the SmartFin-AI API and returns the response
+ * @param {string} userId - The user's ID
+ * @param {string} userMessage - The message from the user
+ * @param {Object} context - The full user context data from MongoDB
+ * @returns {Promise<string>} The AI response
+ */
+export async function sendToSmartFin(userId, userMessage, context) {
+  try {
+    // Construct the API endpoint URL
+    const url = `${SMARTFIN_BASE}/api/v1/conversation/${userId}`;
+    
+    // Get recent conversation history
+    let conversationHistory = [];
+    try {
+      const recentConversation = await getRecentConversation(userId);
+      if (recentConversation && recentConversation.messages) {
+        // Extract just the messages, removing any metadata
+        conversationHistory = recentConversation.messages.map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
+      }
+    } catch (error) {
+      console.warn('Could not retrieve conversation history:', error);
+      // Continue without conversation history
+    }
+    
+    // Prepare the payload to send to the API, including conversation history
+    const payload = {
+      user_id: userId,
+      message: userMessage,
+      context: {
+        ...context,
+        conversation_history: conversationHistory
+      }
+    };
+    
+    // Make the request to the SmartFin-AI API
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    
+    // Handle API errors
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`SmartFin API error: ${response.status} ${errorText}`);
+    }
+    
+    // Extract and return the AI response
+    const data = await response.json();
+    return data.response;
+  } catch (error) {
+    console.error('Error calling SmartFin-AI:', error);
+    throw new Error('Failed to get response from financial assistant');
+  }
+}
+Conversation History Implementation
+Conversation Schema (src/lib/models/conversationSchema.js):
+"use client";
+import { usePathname } from "next/navigation";
+import Navbar from "./components/Navbar";
+import DashboardLayout from "./dashboard/DashboardLayout";
+import { SessionProvider } from "next-auth/react";
+
+export default function ClientLayout({ children }) {
+  const pathname = usePathname(); // Get the current pathname for rendering different page layouts
+  const isDashboard = pathname.startsWith("/dashboard");
+
+  return (
+    <SessionProvider>
+      {isDashboard ? (
+        // For dashboard routes, render the dashboard layout
+        <DashboardLayout>{children}</DashboardLayout>
+      ) : (
+        // For other routes, render the standard layout with navbar
+        <>
+          <Navbar />
+          <main className="pt-16">{children}</main>
+        </>
+      )}
+    </SessionProvider>
+  );
+}
+Environment Configuration
+Required environment variables in .env.local:
+
+This comprehensive setup allows the SmartFin-AI chatbot to:
+Authenticate users using NextAuth
+Store and retrieve user financial data from MongoDB
+Maintain conversation history across sessions
+Send contextual data to the SmartFin-AI API
+Present personalized financial advice to users
+Provide a seamless user experience with loading states and error handling
+The architecture follows best practices for separation of concerns, with clear boundaries between fro
+This comprehensive setup allows the SmartFin-AI chatbot to:
+Authenticate users using NextAuth
+Store and retrieve user financial data from MongoDB
+Maintain conversation history across sessions
+Send contextual data to the SmartFin-AI API
+Present personalized financial advice to users
+Provide a seamless user experience with loading states and error handling
+
+the application will 
